@@ -20,6 +20,8 @@ import (
 	"math"
 	"strconv"
 	"unicode"
+
+	"github.com/klmitch/nelson/internal/parser"
 )
 
 // ErrInvalid indicates an error parsing an interval expression.
@@ -71,6 +73,68 @@ func (s *state) Get(pos int) (int64, error) {
 	return strconv.ParseInt(s.Text[s.IPos:pos], 10, 64)
 }
 
+// Parse processes a single character from the input.
+func (s *state) Parse(pos int, char rune) error {
+	switch s.State {
+	case stateInit:
+		if char == '(' {
+			s.ExclStart = true
+		} else if char != '[' {
+			return s.Error(nil)
+		}
+		s.State = stateStart
+		s.IPos = pos + 1
+
+	case stateStart, stateEnd:
+		if !unicode.IsDigit(char) && !(s.IPos == pos && (char == '+' || char == '-')) {
+			tmp, err := s.Get(pos)
+			if err != nil {
+				return s.Error(err)
+			}
+			if s.State == stateStart {
+				s.Ival.Start = tmp
+				s.State = stateSep
+			} else {
+				s.Ival.End = tmp
+				s.State = stateClose
+			}
+			return s.Parse(pos, char)
+		}
+
+	case stateSep:
+		if char == ',' {
+			s.State = stateEnd
+			s.IPos = pos + 1
+			return nil
+		}
+		if char == ')' || char == ']' {
+			if s.EmptyStart {
+				s.Ival.End = math.MaxInt64
+			} else {
+				s.ExclStart = false
+				s.Ival.End = s.Ival.Start + 1
+			}
+			s.ExclEnd = true
+			s.State = stateClose
+			return s.Parse(pos, char)
+		}
+		return s.Error(nil)
+
+	case stateClose:
+		if char == ')' {
+			s.ExclEnd = true
+		} else if char != ']' {
+			return s.Error(nil)
+		}
+		s.State = stateDone
+
+	case stateDone:
+		return s.Error(nil)
+	}
+
+	return nil
+}
+
 // Parse parses a string into an Interval.
 func Parse(text string) (Interval, error) {
 	// Construct the state
@@ -83,69 +147,9 @@ func Parse(text string) (Interval, error) {
 		return Interval{}, s.Error(nil)
 	}
 
-	// Loop over the text
-	for pos, char := range text {
-		for {
-			switch s.State {
-			case stateInit:
-				if char == '(' {
-					s.ExclStart = true
-				} else if char != '[' {
-					return Interval{}, s.Error(nil)
-				}
-				s.State = stateStart
-				s.IPos = pos + 1
-
-			case stateStart, stateEnd:
-				if !unicode.IsDigit(char) && !(s.IPos == pos && (char == '+' || char == '-')) {
-					tmp, err := s.Get(pos)
-					if err != nil {
-						return Interval{}, s.Error(err)
-					}
-					if s.State == stateStart {
-						s.Ival.Start = tmp
-						s.State = stateSep
-					} else {
-						s.Ival.End = tmp
-						s.State = stateClose
-					}
-					continue
-				}
-
-			case stateSep:
-				if char == ',' {
-					s.State = stateEnd
-					s.IPos = pos + 1
-					break
-				}
-				if char == ')' || char == ']' {
-					if s.EmptyStart {
-						s.Ival.End = math.MaxInt64
-					} else {
-						s.ExclStart = false
-						s.Ival.End = s.Ival.Start + 1
-					}
-					s.ExclEnd = true
-					s.State = stateClose
-					continue
-				}
-				return Interval{}, s.Error(nil)
-
-			case stateClose:
-				if char == ')' {
-					s.ExclEnd = true
-				} else if char != ']' {
-					return Interval{}, s.Error(nil)
-				}
-				s.State = stateDone
-
-			case stateDone:
-				return Interval{}, s.Error(nil)
-			}
-
-			// Break out of the reprocess loop
-			break
-		}
+	// Parse the text
+	if err := parser.Parse(text, s); err != nil {
+		return Interval{}, err
 	}
 
 	// Make sure we finished processing

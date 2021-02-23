@@ -19,7 +19,13 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/klmitch/nelson/internal/parser"
 )
+
+func TestStateImplementsState(t *testing.T) {
+	assert.Implements(t, (*parser.State)(nil), &state{})
+}
 
 func TestStateErrorBase(t *testing.T) {
 	obj := &state{
